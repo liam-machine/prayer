@@ -1,7 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:prayer/providers/auth_provider.dart';
+import 'package:prayer/providers/prayer_provider.dart';
 import 'package:prayer/screens/register_screen.dart';
+import 'package:prayer/screens/home_screen.dart';
+import 'package:prayer/utils/demo_data.dart';
+import 'package:prayer/services/local_storage_service.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -15,6 +19,7 @@ class _LoginScreenState extends State<LoginScreen> {
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
   bool _isPasswordVisible = false;
+  bool _isLoadingDemo = false;
 
   @override
   void dispose() {
@@ -36,6 +41,53 @@ class _LoginScreenState extends State<LoginScreen> {
           SnackBar(content: Text(authProvider.errorMessage ?? 'Login failed')),
         );
       }
+    }
+  }
+  
+  Future<void> _loginWithDemoUser() async {
+    setState(() {
+      _isLoadingDemo = true;
+    });
+    
+    try {
+      // Generate demo data
+      final demoUser = await DemoData.generateDemoData();
+      
+      // Get providers
+      final authProvider = Provider.of<AuthProvider>(context, listen: false);
+      final prayerProvider = Provider.of<PrayerProvider>(context, listen: false);
+      
+      // Set as current user in local storage
+      final localStorageService = LocalStorageService();
+      await localStorageService.saveCurrentUser(demoUser);
+      
+      // Force providers to reload
+      await authProvider.reloadCurrentUser();
+      
+      // Initialize prayer provider with demo user
+      prayerProvider.initializeForUser(demoUser);
+      
+      // Show success message
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Logged in as Demo User')),
+        );
+        
+        // Explicitly navigate to HomeScreen
+        Navigator.of(context).pushReplacement(
+          MaterialPageRoute(builder: (context) => const HomeScreen()),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error loading demo data: $e')),
+        );
+      }
+    } finally {
+      setState(() {
+        _isLoadingDemo = false;
+      });
     }
   }
 
@@ -153,6 +205,28 @@ class _LoginScreenState extends State<LoginScreen> {
                           );
                         },
                         child: const Text('Don\'t have an account? Sign Up'),
+                      ),
+                      const SizedBox(height: 24),
+                      const Divider(),
+                      const SizedBox(height: 16),
+                      OutlinedButton.icon(
+                        onPressed: (_isLoadingDemo || authProvider.isLoading) 
+                            ? null 
+                            : _loginWithDemoUser,
+                        icon: const Icon(Icons.developer_mode),
+                        label: _isLoadingDemo
+                            ? const SizedBox(
+                                height: 16,
+                                width: 16,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
+                              )
+                            : const Text('DEV MODE - Load Demo Data'),
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: Colors.grey[600],
+                          side: BorderSide(color: Colors.grey[400]!),
+                        ),
                       ),
                     ],
                   ),

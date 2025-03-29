@@ -2,12 +2,10 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:prayer/models/prayer_request.dart';
 import 'package:prayer/models/user.dart';
-import 'package:prayer/services/firestore_service.dart';
-import 'package:prayer/services/notification_service.dart';
+import 'package:prayer/services/local_prayer_service.dart';
 
 class PrayerProvider with ChangeNotifier {
-  final FirestoreService _firestoreService = FirestoreService();
-  final NotificationService _notificationService = NotificationService();
+  final LocalPrayerService _prayerService = LocalPrayerService();
   
   List<PrayerRequest> _userPrayerRequests = [];
   List<PrayerRequest> _friendsPrayerRequests = [];
@@ -31,23 +29,43 @@ class PrayerProvider with ChangeNotifier {
     _friendsRequestsSubscription?.cancel();
     
     // Listen to user's prayer requests
-    _userRequestsSubscription = _firestoreService
-        .getPrayerRequestsForUser(user.id)
+    _userRequestsSubscription = _prayerService
+        .userRequestsStream
         .listen(
           _updateUserPrayerRequests,
           onError: _handleError,
         );
     
     // Listen to friends' prayer requests if user has friends
-    if (user.friendIds.isNotEmpty) {
-      _friendsRequestsSubscription = _firestoreService
-          .getFriendsPrayerRequests(user.friendIds)
-          .listen(
-            _updateFriendsPrayerRequests,
-            onError: _handleError,
-          );
-    } else {
-      _friendsPrayerRequests = [];
+    _friendsRequestsSubscription = _prayerService
+        .friendsRequestsStream
+        .listen(
+          _updateFriendsPrayerRequests,
+          onError: _handleError,
+        );
+    
+    // Load initial data
+    _loadInitialData(user);
+  }
+  
+  // Load initial data
+  Future<void> _loadInitialData(AppUser user) async {
+    _isLoading = true;
+    notifyListeners();
+    
+    try {
+      await _prayerService.getPrayerRequestsForUser(user.id);
+      
+      if (user.friendIds.isNotEmpty) {
+        await _prayerService.getFriendsPrayerRequests(user.friendIds);
+      } else {
+        _friendsPrayerRequests = [];
+        notifyListeners();
+      }
+    } catch (e) {
+      _errorMessage = e.toString();
+    } finally {
+      _isLoading = false;
       notifyListeners();
     }
   }
@@ -65,7 +83,7 @@ class PrayerProvider with ChangeNotifier {
   }
   
   // Handle errors
-  void _handleError(error) {
+  void _handleError(dynamic error) {
     _errorMessage = error.toString();
     notifyListeners();
   }
@@ -77,10 +95,10 @@ class PrayerProvider with ChangeNotifier {
     notifyListeners();
     
     try {
-      String requestId = await _firestoreService.createPrayerRequest(request);
+      await _prayerService.createPrayerRequest(request);
       
       // Subscribe to notifications for this request
-      await _notificationService.subscribeToPrayerRequest(requestId);
+      await _prayerService.subscribeToPrayerRequest(request.userId, request.id);
       
       _isLoading = false;
       notifyListeners();
@@ -101,7 +119,7 @@ class PrayerProvider with ChangeNotifier {
     notifyListeners();
     
     try {
-      await _firestoreService.addPrayerResponse(requestId, response);
+      await _prayerService.addPrayerResponse(requestId, response);
       
       _isLoading = false;
       notifyListeners();
@@ -121,7 +139,7 @@ class PrayerProvider with ChangeNotifier {
     notifyListeners();
     
     try {
-      await _firestoreService.markPrayerRequestAsAnswered(requestId);
+      await _prayerService.markPrayerRequestAsAnswered(requestId);
       
       _isLoading = false;
       notifyListeners();
@@ -139,6 +157,7 @@ class PrayerProvider with ChangeNotifier {
   void dispose() {
     _userRequestsSubscription?.cancel();
     _friendsRequestsSubscription?.cancel();
+    _prayerService.dispose();
     super.dispose();
   }
 } 
